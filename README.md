@@ -67,9 +67,14 @@ Taken from the Master `Notes` / `process` sheets and the 19-Nov upload files.
 - **Price**: VLD PR00 record valid on the run date (else the latest record); domestic customers use the domestic
   sales org, export customers the export org. USD × the run's USD/INR rate → INR. Parts without a VLD record are
   valued at 0 and listed. Settings has an optional switch to use the last invoice price instead.
-- **Order book** (FY April–March, INR lacs): months before the run month = actual sales register; run month = actual
-  to date + open firm/plan; later months = open firm/plan × price. Classification (New Terms, Segment, EXIM, Customer,
-  Family, Model) from the Master; sales parts not in the Master appear as "Not in Master".
+- **Order book** (INR lacs): month columns from 1 April of the FY to run month + 11 (Nov-26 run → Oct-27).
+  Months before the run month = actual sales register. The run month has two columns: invoiced 1st–run date
+  (e.g. "Nov-26 01-24") and open for the rest of the month (e.g. "Nov-26 25-30"); the open column also carries
+  past-due orders not yet invoiced. Later months = open Firm + Plan × price; months after March are marked
+  "Open FY28". The FY totals (Actual YTD, Firm/PO FY27, Estimate/plan FY27, H1, H2, FCST FY27) cover April–March only.
+  A firm PO and an S&OP quantity in the same month are both real demand and are both counted.
+  Classification (New Terms, Segment, EXIM, Customer, Family, Model) from the Master; sales parts not in the Master
+  appear as "Not in Master".
 - CM / cost columns are not included (agreed: skip for now).
 
 ## Open items

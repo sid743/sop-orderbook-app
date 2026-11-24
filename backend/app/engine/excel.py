@@ -16,6 +16,7 @@ BOLD = Font(bold=True)
 HEAD_FILL = PatternFill("solid", fgColor="D9E1F2")
 SUB_FILL = PatternFill("solid", fgColor="F2F2F2")
 ACT_FILL = PatternFill("solid", fgColor="E2EFDA")
+NEXT_FILL = PatternFill("solid", fgColor="EDEDED")
 THIN = Side(style="thin", color="BFBFBF")
 BOX = Border(top=THIN, bottom=THIN, left=THIN, right=THIN)
 QTY_FMT = "#,##0;-#,##0;-"
@@ -103,25 +104,29 @@ def _hdr(ws, row, col, text, fill=HEAD_FILL, wrap=True):
     return c
 
 
-def _month_tag(m, run_m):
-    if m < run_m:
-        return "Actual"
-    if m == run_m:
-        return "Actual + Open"
-    return "Open"
+def _period_fill(p):
+    if p["part"] == "actual":
+        return ACT_FILL
+    return HEAD_FILL if p["in_fy"] else NEXT_FILL
 
 
 def write_order_book(ob: dict, path: str, run_date: pd.Timestamp, usd_inr: float, fy: str):
-    part, qty, val, sm = ob["part"], ob["qty"], ob["val"], ob["summary"]
-    months, run_m = ob["months"], ob["run_month"]
-    mlabels = [m.strftime("%b-%y") for m in months]
+    part, pq, pv, sm, periods = ob["part"], ob["pq"], ob["pv"], ob["summary"], ob["periods"]
+    plabels = [p["label"] for p in periods]
     data = part.copy()
-    for m, lab in zip(months, mlabels):
-        data[f"Q {lab}"] = qty[m]
-        data[f"V {lab}"] = val[m]
+    for p in periods:
+        data[f"Q {p['label']}"] = pq[p["key"]]
+        data[f"V {p['label']}"] = pv[p["key"]]
     for c in sm.columns:
         data[c] = sm[c]
     data = data.reset_index()
+    # FY totals stay FY-only while the month columns run to run month + 11: say so in the headers
+    display = {"Total Qty": f"{fy} Total Qty", "Total Value": f"{fy} Total Value",
+               "Firm/PO Qty": f"Firm/PO Qty {fy}", "Estimate/Plan Qty": f"Estimate/Plan Qty {fy}",
+               "Firm/PO Value": f"Firm/PO Value {fy}", "Estimate/Plan Value": f"Estimate/Plan Value {fy}"}
+    run_p = [p for p in periods if p["month"] == ob["run_month"]]
+    split_note = (f"{run_p[0]['label']} = invoiced to run date, {run_p[1]['label']} = open (incl. past-due not yet "
+                  f"invoiced)") if len(run_p) == 2 else ""
 
     wb = Workbook()
 
@@ -130,12 +135,13 @@ def write_order_book(ob: dict, path: str, run_date: pd.Timestamp, usd_inr: float
     ws.title = "1.Order book summary"
     ws["A1"] = f"Order book {fy} - all values in INR Lacs"
     ws["A1"].font = Font(bold=True, size=13)
-    ws["A2"] = (f"Run date {run_date:%d-%b-%Y}  |  USD/INR {usd_inr:g}  |  Actual sales to run date + open Firm "
-                f"(MRC / Open PO) + Plan (MRC / S&OP) valued at VLD price")
+    ws["A2"] = (f"Run date {run_date:%d-%b-%Y}  |  USD/INR {usd_inr:g}  |  Actual = sales register; Open = Firm "
+                f"(MRC / Open PO) + Plan (MRC / S&OP) at VLD price  |  {split_note}  |  {fy} columns cover "
+                f"Apr-{ob['fy0']:%y} to Mar-{ob['fy_end']:%y}; months after that are shown for the 12-month view")
     ws["A2"].font = Font(italic=True, size=9)
 
     value_cols = ["Actual YTD Value", "Firm/PO Value", "Estimate/Plan Value", "H1 Value", "H2 Value", "Total Value"]
-    value_heads = ["Actual YTD", "Firm/PO", "Estimate/plan", "H1", "H2", f"FCST {fy}"]
+    value_heads = ["Actual YTD", f"Firm/PO {fy}", f"Estimate/plan {fy}", "H1", "H2", f"FCST {fy}"]
 
     def block(start_row, group_cols, title):
         ws.cell(start_row, 1, title).font = Font(bold=True, size=11)
@@ -148,14 +154,13 @@ def write_order_book(ob: dict, path: str, run_date: pd.Timestamp, usd_inr: float
         for h in value_heads:
             _hdr(ws, hr, col, h)
             col += 1
-        first_month_col = col
-        for m, lab in zip(months, mlabels):
-            _hdr(ws, hr, col, f"{lab}\n{_month_tag(m, run_m)}", fill=ACT_FILL if m <= run_m else HEAD_FILL)
+        for p in periods:
+            _hdr(ws, hr, col, f"{p['label']}\n{p['tag']}", fill=_period_fill(p))
             col += 1
         last_col = col - 1
-        ws.row_dimensions[hr].height = 30
+        ws.row_dimensions[hr].height = 42
         g = data.groupby(group_cols, dropna=False)
-        agg = g[value_cols + [f"V {lab}" for lab in mlabels]].sum().reset_index()
+        agg = g[value_cols + [f"V {lab}" for lab in plabels]].sum().reset_index()
         agg = agg.sort_values("Total Value", ascending=False) if len(group_cols) == 1 else agg.sort_values(group_cols)
         r = hr + 1
         for row in agg.itertuples(index=False):
@@ -181,7 +186,7 @@ def write_order_book(ob: dict, path: str, run_date: pd.Timestamp, usd_inr: float
     ws.column_dimensions["A"].width = 18
     ws.column_dimensions["B"].width = 26
     ws.column_dimensions["C"].width = 16
-    for j in range(4, 4 + len(value_heads) + 12):
+    for j in range(4, 4 + len(value_heads) + len(periods)):
         ws.column_dimensions[L(j)].width = 12
     ws.freeze_panes = "A6"
 
@@ -189,10 +194,9 @@ def write_order_book(ob: dict, path: str, run_date: pd.Timestamp, usd_inr: float
     ws2 = wb.create_sheet("2.Part family order book")
     fam_cols = ["New Terms", "Segment", "EXIM Category", "Customer", "Family", "Model1"]
     fam_vals = (["H1 Qty", "H2 Qty", "Total Qty", "H1 Value", "H2 Value", "Total Value", "Firm/PO Value",
-                 "Estimate/Plan Value"] + [f"Q {lab}" for lab in mlabels] + [f"V {lab}" for lab in mlabels])
+                 "Estimate/Plan Value"] + [f"Q {lab}" for lab in plabels] + [f"V {lab}" for lab in plabels])
     fam = data.groupby(fam_cols, dropna=False)[fam_vals].sum().reset_index().sort_values(fam_cols)
-    _write_table(ws2, fam, fam_cols, fam_vals, mlabels, months, run_m, title=f"Part family level order book {fy}",
-                 fy=fy)
+    _write_table(ws2, fam, fam_cols, fam_vals, periods, title=f"Part family level order book {fy}", display=display)
 
     # ---------------- Sheet 3: part level
     ws3 = wb.create_sheet("3.Part level order book")
@@ -202,26 +206,27 @@ def write_order_book(ob: dict, path: str, run_date: pd.Timestamp, usd_inr: float
     pretty = {"cust_code": "Customer Code", "sap_code": "Material", "class_source": "Classified from",
               "sales_org": "Sales Org", "vld_price": "VLD Price", "currency": "Currency", "ex_rate": "Ex Rate",
               "unit_price_inr": "Unit Price (INR)", "price_status": "Price status"}
-    part_vals = ([f"Q {lab}" for lab in mlabels] + [f"V {lab}" for lab in mlabels] +
+    part_vals = ([f"Q {lab}" for lab in plabels] + [f"V {lab}" for lab in plabels] +
                  ["Actual YTD Qty", "Firm/PO Qty", "Estimate/Plan Qty", "Actual YTD Value", "Firm/PO Value",
                   "Estimate/Plan Value", "H1 Qty", "H2 Qty", "Total Qty", "H1 Value", "H2 Value", "Total Value"])
     p3 = data[id_cols + part_vals].copy()
     p3["sap_code"] = p3["sap_code"].map(excel_code)
     p3["cust_code"] = p3["cust_code"].map(excel_code)
     p3 = p3.rename(columns=pretty)
-    _write_table(ws3, p3, [pretty.get(c, c) for c in id_cols], part_vals, mlabels, months, run_m,
-                 title=f"Part level order book {fy}", fy=fy,
+    _write_table(ws3, p3, [pretty.get(c, c) for c in id_cols], part_vals, periods,
+                 title=f"Part level order book {fy}", display=display,
                  num_id={"VLD Price": "#,##0.00", "Ex Rate": "0.00", "Unit Price (INR)": "#,##0.00"})
     wb.save(path)
 
 
-def _write_table(ws, df, id_cols, val_cols, mlabels, months, run_m, title, fy, num_id=None):
+def _write_table(ws, df, id_cols, val_cols, periods, title, display=None, num_id=None):
     """Row 1 title, row 2 SUBTOTAL, row 3 group band, row 4 headers, data from row 5."""
     num_id = num_id or {}
+    display = display or {}
     ws.cell(1, 1, title).font = Font(bold=True, size=12)
     ws.cell(2, 1, "Subtotal (filtered)").font = Font(italic=True, size=9)
     hr, first = 4, 5
-    tag = {lab: _month_tag(m, run_m) for m, lab in zip(months, mlabels)}
+    by_label = {p["label"]: p for p in periods}
     col = 1
     for c in id_cols:
         _hdr(ws, hr, col, c)
@@ -230,13 +235,15 @@ def _write_table(ws, df, id_cols, val_cols, mlabels, months, run_m, title, fy, n
         label = c
         fill = HEAD_FILL
         if c.startswith("Q ") or c.startswith("V "):
-            lab = c[2:]
-            label = f"{lab}\n{tag[lab]}"
-            fill = ACT_FILL if tag[lab] != "Open" else HEAD_FILL
+            p = by_label[c[2:]]
+            label = f"{p['label']}\n{p['tag']}"
+            fill = _period_fill(p)
             band = "Qty" if c.startswith("Q ") else "Value (INR Lacs)"
             ws.cell(3, col, band).font = Font(bold=True, size=9)
-        elif "Value" in c:
-            label = c.replace("Value", "Value (Lacs)")
+        else:
+            label = display.get(c, c)
+            if "Value" in label:
+                label = label.replace("Value", "Value (Lacs)")
         _hdr(ws, hr, col, label, fill=fill)
         col += 1
     last_row = first + len(df) - 1
@@ -263,7 +270,7 @@ def _write_table(ws, df, id_cols, val_cols, mlabels, months, run_m, title, fy, n
         c.number_format = QTY_FMT if (name.startswith("Q ") or "Qty" in name) else VAL_FMT
         c.font = BOLD
         c.fill = SUB_FILL
-    ws.row_dimensions[hr].height = 30
+    ws.row_dimensions[hr].height = 42
     for j in range(1, nid + 1):
         ws.column_dimensions[L(j)].width = 14
     for j in range(nid + 1, nid + len(val_cols) + 1):

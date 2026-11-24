@@ -165,15 +165,8 @@ def build_po_sop_demand(po: pd.DataFrame, sop: pd.DataFrame, master: pd.DataFram
     df = pd.DataFrame(rows, columns=[c for c in DEMAND_COLS if c != "orig_date"])
     df = _apply_dates(df, run_date, settings, issues, "PO/S&OP")
 
-    # Same customer + part has both a firm PO and an S&OP quantity in the same month: possible double count
-    if not df.empty:
-        m = df.assign(month=df["date"].dt.to_period("M"))
-        g = m.groupby(["cust_code", "sap_code", "month", "zone"])["qty"].sum().unstack("zone")
-        if "Firm" in g.columns and "Plan" in g.columns:
-            both = g.dropna(subset=["Firm", "Plan"])
-            for (cc, sap, month), r in both.iterrows():
-                issues.add("PO and S&OP in same month (check double count)", customer_code=cc, sap_code=sap,
-                           month=str(month), firm_po_qty=r["Firm"], sop_plan_qty=r["Plan"])
+    # A firm PO and an S&OP quantity for the same part in the same month are both real demand
+    # (confirmed 24-Nov-2026): both are uploaded and both are counted, no netting and no report line.
     return df
 
 

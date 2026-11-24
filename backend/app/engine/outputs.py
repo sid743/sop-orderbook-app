@@ -4,7 +4,7 @@ from __future__ import annotations
 import pandas as pd
 
 from .demand import Issues
-from .util import add_months, fy_start, mat_sort_key, month_start
+from .util import add_months, fy_label, fy_start, mat_sort_key, month_end, month_start
 
 
 # --------------------------------------------------------------------------- MD61 date columns
@@ -185,12 +185,44 @@ def _attributes(keys: pd.DataFrame, master: pd.DataFrame, sales: pd.DataFrame, i
     return pd.DataFrame(rows)
 
 
+def order_book_periods(run_date: pd.Timestamp) -> tuple[list[dict], list, pd.Timestamp]:
+    """Column periods: FY start .. run month + 11. The run month is split into invoiced (1st..run date)
+    and open (run date+1..month end; also carries past-due orders not yet invoiced)."""
+    fy0 = fy_start(run_date)
+    run_m = month_start(run_date)
+    last_m = add_months(run_m, 11)
+    fy_last = add_months(fy0, 11)
+    months, m = [], fy0
+    while m <= last_m:
+        months.append(m)
+        m = add_months(m, 1)
+    periods = []
+    for m in months:
+        in_fy = m <= fy_last
+        base = dict(month=m, in_fy=in_fy, half=("H1" if m.month in (4, 5, 6, 7, 8, 9) else "H2") if in_fy else "")
+        if m < run_m:
+            periods.append({**base, "key": f"{m:%Y-%m}", "label": m.strftime("%b-%y"), "tag": "Actual", "part": "actual"})
+        elif m == run_m:
+            end_day = month_end(m).day
+            periods.append({**base, "key": f"{m:%Y-%m} A", "label": f"{m:%b-%y} 01-{run_date.day:02d}",
+                            "tag": "Actual", "part": "actual"})
+            open_label = (f"{m:%b-%y} {run_date.day + 1:02d}-{end_day:02d}" if run_date.day < end_day
+                          else f"{m:%b-%y} open")
+            periods.append({**base, "key": f"{m:%Y-%m} O", "label": open_label, "tag": "Open", "part": "open"})
+        else:
+            tag = "Open" if in_fy else f"Open {fy_label(m)}"
+            periods.append({**base, "key": f"{m:%Y-%m}", "label": m.strftime("%b-%y"), "tag": tag, "part": "open"})
+    return periods, months, last_m
+
+
 def build_order_book(demand: pd.DataFrame, sales: pd.DataFrame, master: pd.DataFrame, vld: pd.DataFrame,
                      run_date: pd.Timestamp, usd_inr: float, issues: Issues, fallback_sales: bool = False) -> dict:
     fy0 = fy_start(run_date)
-    months = [add_months(fy0, i) for i in range(12)]
+    fy_months = [add_months(fy0, i) for i in range(12)]
     fy_end = add_months(fy0, 12) - pd.Timedelta(days=1)
     run_m = month_start(run_date)
+    periods, months, last_m = order_book_periods(run_date)
+    last_end = month_end(last_m)
 
     # actual sales inside the FY up to the run date
     s = sales.dropna(subset=["date"]).copy()
@@ -208,9 +240,10 @@ def build_order_book(demand: pd.DataFrame, sales: pd.DataFrame, master: pd.DataF
     s = s.rename(columns={"material": "sap_code"})
     act = s.groupby(["cust_code", "sap_code", "month"], as_index=False).agg(qty=("qty", "sum"), amount=("amount", "sum"))
 
-    # open demand inside the FY (dates already past-due adjusted)
-    d = demand[(demand["date"] <= fy_end)].copy()
-    d["month"] = d["date"].map(month_start)
+    # open demand up to run month + 11 (dates already past-due adjusted; anything still dated before
+    # the run month is shown in the run month's open column)
+    d = demand[(demand["date"] <= last_end)].copy()
+    d["month"] = d["date"].map(lambda x: max(month_start(x), run_m))
     opn = d.groupby(["cust_code", "sap_code", "zone", "month"], as_index=False)["qty"].sum()
 
     keys = pd.concat([act[["cust_code", "sap_code"]], opn[["cust_code", "sap_code"]]]).drop_duplicates()
@@ -233,29 +266,43 @@ def build_order_book(demand: pd.DataFrame, sales: pd.DataFrame, master: pd.DataF
     plan_q = pivot(opn, "qty", lambda f: f["zone"] == "Plan")
     price = part.set_index(["cust_code", "sap_code"])["unit_price_inr"].reindex(act_q.index).fillna(0)
     open_q = firm_q + plan_q
-    qty = act_q + open_q
-    val = act_v + open_q.mul(price, axis=0) / 1e5
+    open_v = open_q.mul(price, axis=0) / 1e5
+
+    # one column per period (the run month has two)
+    pq = pd.DataFrame(index=act_q.index)
+    pv = pd.DataFrame(index=act_q.index)
+    for p in periods:
+        m = p["month"]
+        if p["part"] == "actual":
+            pq[p["key"]] = act_q[m]
+            pv[p["key"]] = act_v[m]
+        else:
+            pq[p["key"]] = open_q[m]
+            pv[p["key"]] = open_v[m]
 
     part = part.set_index(["cust_code", "sap_code"]).reindex(act_q.index)
-    h1 = [m for m in months if m.month in (4, 5, 6, 7, 8, 9)]
-    h2 = [m for m in months if m not in h1]
+    fy_keys = [p["key"] for p in periods if p["in_fy"]]
+    h1 = [p["key"] for p in periods if p["half"] == "H1"]
+    h2 = [p["key"] for p in periods if p["half"] == "H2"]
     summary_cols = pd.DataFrame({
-        "Actual YTD Qty": act_q.sum(axis=1),
-        "Firm/PO Qty": firm_q.sum(axis=1),
-        "Estimate/Plan Qty": plan_q.sum(axis=1),
-        "Actual YTD Value": act_v.sum(axis=1),
-        "Firm/PO Value": firm_q.sum(axis=1) * price / 1e5,
-        "Estimate/Plan Value": plan_q.sum(axis=1) * price / 1e5,
-        "H1 Qty": qty[h1].sum(axis=1), "H2 Qty": qty[h2].sum(axis=1), "Total Qty": qty.sum(axis=1),
-        "H1 Value": val[h1].sum(axis=1), "H2 Value": val[h2].sum(axis=1), "Total Value": val.sum(axis=1),
+        "Actual YTD Qty": act_q[fy_months].sum(axis=1),
+        "Firm/PO Qty": firm_q[fy_months].sum(axis=1),
+        "Estimate/Plan Qty": plan_q[fy_months].sum(axis=1),
+        "Actual YTD Value": act_v[fy_months].sum(axis=1),
+        "Firm/PO Value": firm_q[fy_months].sum(axis=1) * price / 1e5,
+        "Estimate/Plan Value": plan_q[fy_months].sum(axis=1) * price / 1e5,
+        "H1 Qty": pq[h1].sum(axis=1), "H2 Qty": pq[h2].sum(axis=1), "Total Qty": pq[fy_keys].sum(axis=1),
+        "H1 Value": pv[h1].sum(axis=1), "H2 Value": pv[h2].sum(axis=1), "Total Value": pv[fy_keys].sum(axis=1),
     })
 
-    missing_price = part[(part["unit_price_inr"].fillna(0) <= 0) & (open_q.sum(axis=1) > 0)]
+    open_shown = open_q.sum(axis=1)
+    missing_price = part[(part["unit_price_inr"].fillna(0) <= 0) & (open_shown > 0)]
     for (cc, sap), r in missing_price.iterrows():
         issues.add("No VLD price (open qty valued at 0)", customer_code=cc, sap_code=sap, customer=r["Customer"],
-                   dom_export=r["Dom/Export"], open_qty_fy=float(open_q.loc[(cc, sap)].sum()), price_status=r["price_status"])
+                   dom_export=r["Dom/Export"], open_qty_fy=float(open_q.loc[(cc, sap), fy_months].sum()),
+                   open_qty_to_month_11=float(open_shown.loc[(cc, sap)]), price_status=r["price_status"])
     expired = part[part["price_status"].fillna("").str.contains("expired|other sales org|future|No rate|last invoice", case=False)
-                   & (open_q.sum(axis=1) > 0)]
+                   & (open_shown > 0)]
     for (cc, sap), r in expired.iterrows():
         issues.add("VLD price notes", customer_code=cc, sap_code=sap, customer=r["Customer"], note=r["price_status"],
                    vld_price=r["vld_price"], currency=r["currency"], valid_to=r["valid_to"])
@@ -265,5 +312,5 @@ def build_order_book(demand: pd.DataFrame, sales: pd.DataFrame, master: pd.DataF
                    customer=r["Customer"], description=r["Description"], actual_qty=float(act_q.loc[(cc, sap)].sum()),
                    actual_value_lacs=float(act_v.loc[(cc, sap)].sum()))
 
-    return dict(part=part, qty=qty, val=val, summary=summary_cols, months=months, run_month=run_m, fy0=fy0,
-                fy_end=fy_end, act_q=act_q, open_q=open_q, h1=h1, h2=h2)
+    return dict(part=part, pq=pq, pv=pv, periods=periods, summary=summary_cols, months=months, run_month=run_m,
+                fy0=fy0, fy_end=fy_end, last_month=last_m, act_q=act_q, open_q=open_q)
