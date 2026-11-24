@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Optional
 
 from .config import DATA_DIR, DEFAULT_SETTINGS, MASTER_SLOTS, RUN_SLOTS
+from .engine.util import norm_status
 
 
 def _now() -> str:
@@ -40,12 +41,33 @@ def settings_path() -> Path:
     return DATA_DIR / "settings.json"
 
 
+def _migrate(saved: dict) -> dict:
+    """Bring settings saved by an older version up to date (runs on every load until saved again)."""
+    version = int(saved.get("settings_version", 1) or 1)
+    if version < 2 and isinstance(saved.get("status_zone"), dict):
+        # v1 turned spaces into underscores, so "In Process" and IN_PROCESS shared one key and
+        # "Matl' Acquisition" was stored as MATL_ACQUISITION. Team decision 24-Nov-2026:
+        # IN_PROCESS (Domestic MRC) = Firm, "In Process" (Export MRC) = Plan.
+        sz = {norm_status(k): v for k, v in saved["status_zone"].items()}
+        if "MATL_ACQUISITION" in sz:
+            sz["MATL ACQUISITION"] = sz.pop("MATL_ACQUISITION")
+        sz["IN_PROCESS"] = "Firm"
+        sz["IN PROCESS"] = "Plan"
+        for k, v in DEFAULT_SETTINGS["status_zone"].items():
+            sz.setdefault(k, v)
+        saved = dict(saved, status_zone=sz)
+    if version < 2:
+        saved["open_items"] = [t for t in saved.get("open_items", []) if "IN_PROCESS" not in t]
+    saved["settings_version"] = DEFAULT_SETTINGS["settings_version"]
+    return saved
+
+
 def load_settings() -> dict:
-    saved = _read_json(settings_path(), {})
+    saved = _migrate(_read_json(settings_path(), {}))
     merged = copy.deepcopy(DEFAULT_SETTINGS)
     for k, v in saved.items():
         if k == "status_zone" and isinstance(v, dict):
-            merged["status_zone"] = {str(a).upper(): b for a, b in v.items()}
+            merged["status_zone"] = {norm_status(a): b for a, b in v.items()}
         else:
             merged[k] = v
     return merged
@@ -59,7 +81,7 @@ def save_settings(new: dict) -> dict:
             cur[k] = v
     zones = {}
     for k, v in cur["status_zone"].items():
-        key = re.sub(r"[\s\-]+", "_", str(k).strip().upper().replace("'", ""))
+        key = norm_status(k)
         if not key:
             continue
         val = str(v).strip().capitalize()

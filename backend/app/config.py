@@ -27,16 +27,18 @@ RUN_SLOTS = {
 }
 
 DEFAULT_SETTINGS = {
-    # MRC status -> zone. Firm / Plan / Ignore.
+    # MRC status -> zone. Firm / Plan / Ignore. Spelling matters (underscore vs space), case does not.
+    # Team decision 24-Nov-2026: IN_PROCESS (Domestic MRC) = Firm, "In Process" (Export MRC) = Plan.
     "status_zone": {
         "PENDING": "Firm",
         "OPEN": "Firm",
         "ACCEPTED": "Firm",
         "SUPPLIER_REQ_CHANGE": "Firm",
-        "PLANNED": "Plan",
+        "IN_PROCESS": "Firm",
         "TRADEOFF": "Plan",
-        "IN_PROCESS": "Plan",
-        "MATL_ACQUISITION": "Plan",
+        "PLANNED": "Plan",
+        "IN PROCESS": "Plan",
+        "MATL ACQUISITION": "Plan",
     },
     "max_date_columns": 97,          # Notes: max 97 columns, go monthly from the last month
     "plan_horizon_months": 13,       # demand kept up to the end of run month + N (19-Nov file ran to Dec-2027)
@@ -47,8 +49,6 @@ DEFAULT_SETTINGS = {
     "active_flag": "X",
     "price_fallback_sales": False,   # VLD only (agreed); switch on to use last invoice price when VLD has none
     "last_usd_inr": None,
-    "open_items": [
-        "Ask the team: should MRC status IN_PROCESS be Firm or Plan? It is set to Plan for now "
-        "(Notes sheet says Plan; the 19-Nov MD61 Firm file had it in Firm). Change it under Status -> zone.",
-    ],
+    "open_items": [],
+    "settings_version": 2,
 }

@@ -46,6 +46,8 @@ export default function Settings({ state, refresh }) {
         <p className="muted small">
           Firm goes to the F-plan MD61 file, ZVA_SCH and Firm/PO in the order book. Plan goes to the P-plan MD61 file
           and Estimate/plan. Ignore drops the line. A status not listed here is left out and shown in the run report.
+          Spelling matters, case does not: <code>IN_PROCESS</code> (with underscore, Domestic MRC) and{" "}
+          <code>IN PROCESS</code> (with a space, Export MRC) are separate statuses.
         </p>
         <table className="tbl narrow">
           <tbody>
@@ -72,7 +74,7 @@ export default function Settings({ state, refresh }) {
                   type="button"
                   disabled={!newStatus.trim()}
                   onClick={() => {
-                    setZone(newStatus.trim().toUpperCase().replace(/[\s-]+/g, "_"), "Plan");
+                    setZone(newStatus.trim().toUpperCase().replace(/['’]/g, "").replace(/\s+/g, " "), "Plan");
                     setNewStatus("");
                   }}
                 >

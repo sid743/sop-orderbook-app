@@ -53,8 +53,10 @@ Taken from the Master `Notes` / `process` sheets and the 19-Nov upload files.
 
 - **CAT (MRC)**: `Item ID` + delivery location (`Deliver To` / `Delivery To`) → Master `MRC CODE` + `Location` → SAP code and customer code.
   Qty = Ordered − MAX(Shipped, Received). Date = Ship Date. Quantities for different MRC revisions of one SAP code are added.
-- **Zone by MRC status** (Settings tab): Firm = PENDING, OPEN, ACCEPTED, SUPPLIER_REQ_CHANGE.
-  Plan = PLANNED, TRADEOFF, MATL_ACQUISITION, **IN_PROCESS** (see open item below).
+- **Zone by MRC status** (Settings tab; spelling matters, case does not):
+  Firm = Pending, Open, ACCEPTED, SUPPLIER_REQ_CHANGE, **IN_PROCESS** (with underscore, Domestic MRC).
+  Plan = Tradeoff, Planned, **In Process** (with a space, Export MRC), Matl' Acquisition.
+  Team decision 24-Nov-2026. Settings saved by the first version are converted automatically on first load.
 - **Other customers**: `Open PO FIRM ZONE` sheet = Firm (Best Ex Works date); `S&OP plan zone` sheet = Plan
   (month quantity on the 1st of the month). Material → Master (PO/S&OP rows) for the SAP code.
 - **Past dues**: dates before the 1st of the run month go to the 1st of the run month (as in the 19-Nov Firm file).
@@ -79,8 +81,6 @@ Taken from the Master `Notes` / `process` sheets and the 19-Nov upload files.
 
 ## Open items
 
-- **IN_PROCESS status**: set to Plan for now. The Notes sheet lists "In Process" under Plan zone, but the 19-Nov MD61
-  Firm file had those lines in Firm. Confirm with the team, then change it in Settings → MRC status → zone.
 - **Plan prefix**: the process sheet says Plan starts with "B"; the 19-Nov Plan file and MD79 use "P". The app uses P
   (Settings).
 - **97 columns**: the app counts date columns only. If SAP counts the 4 key columns too, set the limit to 93.

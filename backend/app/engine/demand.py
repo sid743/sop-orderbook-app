@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import pandas as pd
 
-from .util import add_months, month_end, month_start
+from .util import add_months, month_end, month_start, norm_status
 
 DEMAND_COLS = ["source", "zone", "cust_code", "sap_code", "date", "orig_date", "qty", "status", "ref"]
 
@@ -59,7 +59,7 @@ def _apply_dates(df: pd.DataFrame, run_date: pd.Timestamp, settings: dict, issue
 
 
 def build_mrc_demand(mrc: pd.DataFrame, master: pd.DataFrame, run_date, settings, issues: Issues) -> pd.DataFrame:
-    zone_map = {k.upper(): v for k, v in settings["status_zone"].items()}
+    zone_map = {norm_status(k): v for k, v in settings["status_zone"].items()}
     mm = master[master["is_mrc"]].drop_duplicates(["mrc_code", "location"])
     key = {(a, b): (c, d) for a, b, c, d in zip(mm.mrc_code, mm.location, mm.sap_code, mm.cust_code)}
     # fallback: MRC code alone when it maps to a single SAP code + customer

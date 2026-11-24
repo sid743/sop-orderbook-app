@@ -39,9 +39,15 @@ def excel_code(code: str):
 
 
 def norm_status(value) -> str:
+    """MRC status key: upper-case, apostrophes dropped, runs of spaces -> one space.
+
+    Underscores and spaces stay different on purpose: the team treats IN_PROCESS (Domestic MRC) as Firm and
+    "In Process" (Export MRC) as Plan, so they must not collapse into the same key.
+    "Matl' Acquisition" -> "MATL ACQUISITION", "Pending" -> "PENDING".
+    """
     s = str(value or "").strip().upper()
     s = s.replace("'", "").replace("’", "")
-    s = re.sub(r"[\s\-]+", "_", s)
+    s = re.sub(r"\s+", " ", s)
     return s
 
 
